@@ -1,0 +1,19 @@
+# Docker CI/CD Component
+
+This component of gitlab makes it easy to build applications in the nexus repository, below is the configuration on how to import it into your projects:
+Edit the `.gitla-ci.yml` present in your project and add the following configuration:
+
+```yaml
+include:
+  - component: $CI_SERVER_FQDN/land/ci-cd-catalog/docker/base@<version>
+    inputs:
+      app_name: test1
+      dockerfile_file_path: ./test/build/Dockerfile.test1
+```
+
+## Inputs
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+{{ range .Inputs }}| {{ .Name }} | {{ .Description }} | {{ .Required }} | {{ .Default }} |
+{{ end }}
