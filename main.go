@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"text/template"
 
 	"github.com/goccy/go-yaml"
@@ -16,7 +18,8 @@ type Inputs struct {
 }
 
 type Spec struct {
-	Inputs map[string]Inputs `yaml:"inputs"`
+	Description string            `yaml:"description"`
+	Inputs      map[string]Inputs `yaml:"inputs"`
 }
 
 type Config struct {
@@ -31,30 +34,31 @@ type InputData struct {
 	Default     string
 }
 
-type TemplateData struct {
-	Inputs []InputData
+type ComponentData struct {
+	Name        string
+	Description string
+	Inputs      []InputData
 }
 
-func main() {
-	// Leggi il file YAML
-	yamlFile, err := os.ReadFile("templates/base.yml")
+type TemplateData struct {
+	Components []ComponentData
+}
+
+func parseTemplate(path string) (ComponentData, error) {
+	yamlFile, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Printf("Error reading YAML file: %s\n", err)
-		return
+		return ComponentData{}, fmt.Errorf("error reading YAML file %s: %w", path, err)
 	}
 
-	// Decodifica il file YAML
 	var config Config
 	err = yaml.Unmarshal(yamlFile, &config)
 	if err != nil {
-		fmt.Printf("Error parsing YAML file: %s\n", err)
-		return
+		return ComponentData{}, fmt.Errorf("error parsing YAML file %s: %w", path, err)
 	}
 
-	// Prepara i dati per il template
-	var inputData []InputData
+	var inputs []InputData
 	for name, input := range config.Spec.Inputs {
-		inputData = append(inputData, InputData{
+		inputs = append(inputs, InputData{
 			Name:        name,
 			Description: input.Description,
 			Required:    input.Default == "",
@@ -62,8 +66,53 @@ func main() {
 		})
 	}
 
+	sort.Slice(inputs, func(i, j int) bool {
+		// Metti i required prima, poi ordina per nome
+		if inputs[i].Required != inputs[j].Required {
+			return inputs[i].Required
+		}
+		return inputs[i].Name < inputs[j].Name
+	})
+
+	// Ricava il nome del componente dal nome del file (senza estensione)
+	base := filepath.Base(path)
+	name := base[:len(base)-len(filepath.Ext(base))]
+
+	return ComponentData{
+		Name:        name,
+		Description: config.Spec.Description,
+		Inputs:      inputs,
+	}, nil
+}
+
+func main() {
+	// Cerca tutti i template nella directory templates/
+	templates, err := filepath.Glob("templates/*.yml")
+	if err != nil {
+		fmt.Printf("Error finding template files: %s\n", err)
+		return
+	}
+
+	if len(templates) == 0 {
+		fmt.Println("No template files found in templates/")
+		return
+	}
+
+	sort.Strings(templates)
+
+	// Parsa tutti i template
+	var components []ComponentData
+	for _, t := range templates {
+		component, err := parseTemplate(t)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return
+		}
+		components = append(components, component)
+	}
+
 	templateData := TemplateData{
-		Inputs: inputData,
+		Components: components,
 	}
 
 	// Leggi il file di template
