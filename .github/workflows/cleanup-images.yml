@@ -1,0 +1,23 @@
+name: Cleanup old container images
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Every Sunday at 3:00 AM
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete old untagged versions (30+ days)
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: gitlab-component-docs-gen
+          package-type: container
+          min-versions-to-keep: 3
+          delete-only-pre-release-versions: false
+          ignore-versions: '^(latest|\\d+\\.\\d+\\.\\d+)$'
+          token: ${{ secrets.GITHUB_TOKEN }}

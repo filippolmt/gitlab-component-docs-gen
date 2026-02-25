@@ -4,10 +4,13 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/template"
 
 	"github.com/goccy/go-yaml"
@@ -39,12 +42,146 @@ type InputData struct {
 }
 
 type ComponentData struct {
-	Name   string
-	Inputs []InputData
+	Name        string
+	Description string
+	Inputs      []InputData
 }
 
 type TemplateData struct {
-	Components []ComponentData
+	ProjectPath string
+	Version     string
+	Components  []ComponentData
+}
+
+// ProjectConfig represents the optional config file .gitlab-component-docs-gen.yml
+type ProjectConfig struct {
+	ProjectPath string `yaml:"project_path"`
+	Version     string `yaml:"version"`
+}
+
+// resolveProjectPath determines the project path using priority:
+// 1. CLI flag --project-path
+// 2. Env var PROJECT_PATH
+// 3. Config file .gitlab-component-docs-gen.yml
+// 4. Git remote auto-detect
+// 5. Fallback placeholder
+func resolveProjectPath(flagValue string) string {
+	// 1. CLI flag
+	if flagValue != "" {
+		return flagValue
+	}
+
+	// 2. Env var
+	if envPath := os.Getenv("PROJECT_PATH"); envPath != "" {
+		return envPath
+	}
+
+	// 3. Config file
+	if configPath := readConfigProjectPath(); configPath != "" {
+		return configPath
+	}
+
+	// 4. Git remote
+	if gitPath := detectGitProjectPath(); gitPath != "" {
+		return gitPath
+	}
+
+	// 5. Fallback
+	return "<your-project-path>"
+}
+
+func readConfigProjectPath() string {
+	data, err := os.ReadFile(".gitlab-component-docs-gen.yml")
+	if err != nil {
+		return ""
+	}
+	var config ProjectConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return ""
+	}
+	return config.ProjectPath
+}
+
+func detectGitProjectPath() string {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return parseGitRemoteURL(strings.TrimSpace(string(out)))
+}
+
+func parseGitRemoteURL(remote string) string {
+	// SSH: git@gitlab.com:group/project.git
+	if strings.Contains(remote, ":") && strings.Contains(remote, "@") {
+		parts := strings.SplitN(remote, ":", 2)
+		if len(parts) == 2 {
+			path := parts[1]
+			path = strings.TrimSuffix(path, ".git")
+			return path
+		}
+	}
+
+	// HTTPS: https://gitlab.com/group/project.git
+	if strings.Contains(remote, "//") {
+		parts := strings.SplitN(remote, "//", 2)
+		if len(parts) == 2 {
+			// Remove host: gitlab.com/group/project.git -> group/project.git
+			slashIdx := strings.Index(parts[1], "/")
+			if slashIdx >= 0 {
+				path := parts[1][slashIdx+1:]
+				path = strings.TrimSuffix(path, ".git")
+				return path
+			}
+		}
+	}
+
+	return ""
+}
+
+// resolveVersion determines the version using priority:
+// 1. CLI flag --version
+// 2. Env var VERSION
+// 3. Config file .gitlab-component-docs-gen.yml
+// 4. Git tag auto-detect
+// 5. Fallback placeholder
+func resolveVersion(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+
+	if envVersion := os.Getenv("VERSION"); envVersion != "" {
+		return envVersion
+	}
+
+	if configVersion := readConfigVersion(); configVersion != "" {
+		return configVersion
+	}
+
+	if gitVersion := detectGitVersion(); gitVersion != "" {
+		return gitVersion
+	}
+
+	return "<version>"
+}
+
+func readConfigVersion() string {
+	data, err := os.ReadFile(".gitlab-component-docs-gen.yml")
+	if err != nil {
+		return ""
+	}
+	var config ProjectConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return ""
+	}
+	return config.Version
+}
+
+func detectGitVersion() string {
+	out, err := exec.Command("git", "describe", "--tags", "--abbrev=0").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // formatDefault converts a default value to its string representation for documentation.
@@ -66,6 +203,15 @@ func formatDefault(val interface{}) string {
 	default:
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+// loadComponentDescription reads an optional docs/<name>.md file for a component
+func loadComponentDescription(name string) string {
+	data, err := os.ReadFile(filepath.Join("docs", name+".md"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func parseTemplate(path string) (ComponentData, error) {
@@ -103,8 +249,9 @@ func parseTemplate(path string) (ComponentData, error) {
 	name := base[:len(base)-len(filepath.Ext(base))]
 
 	return ComponentData{
-		Name:   name,
-		Inputs: inputs,
+		Name:        name,
+		Description: loadComponentDescription(name),
+		Inputs:      inputs,
 	}, nil
 }
 
@@ -125,6 +272,10 @@ func ensureTemplate(path string, defaultContent []byte) (bool, error) {
 }
 
 func main() {
+	projectPath := flag.String("project-path", "", "GitLab project path (e.g. group/project)")
+	version := flag.String("version", "", "Component version (e.g. 1.0.0)")
+	flag.Parse()
+
 	// If README.md.tmpl doesn't exist, create it from the embedded default
 	created, err := ensureTemplate("README.md.tmpl", defaultTemplate)
 	if err != nil {
@@ -161,7 +312,9 @@ func main() {
 	}
 
 	templateData := TemplateData{
-		Components: components,
+		ProjectPath: resolveProjectPath(*projectPath),
+		Version:     resolveVersion(*version),
+		Components:  components,
 	}
 
 	// Read the template file

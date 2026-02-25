@@ -129,6 +129,66 @@ func TestParseTemplate_NoInputs(t *testing.T) {
 	}
 }
 
+func TestLoadComponentDescription_Exists(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	os.MkdirAll(docsDir, 0755)
+	os.WriteFile(filepath.Join(docsDir, "build.md"), []byte("This component builds your app.\n"), 0644)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	got := loadComponentDescription("build")
+	if got != "This component builds your app." {
+		t.Errorf("expected 'This component builds your app.', got %q", got)
+	}
+}
+
+func TestLoadComponentDescription_Missing(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	got := loadComponentDescription("nonexistent")
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestParseTemplate_WithDescription(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create docs directory with description
+	docsDir := filepath.Join(dir, "docs")
+	os.MkdirAll(docsDir, 0755)
+	os.WriteFile(filepath.Join(docsDir, "deploy.md"), []byte("Deploys the application to production."), 0644)
+
+	// Create template YAML
+	yamlContent := `spec:
+  inputs:
+    app_name:
+      description: "Application name"
+`
+	path := filepath.Join(dir, "deploy.yml")
+	os.WriteFile(path, []byte(yamlContent), 0644)
+
+	// Change to dir so loadComponentDescription finds docs/
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	component, err := parseTemplate(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if component.Description != "Deploys the application to production." {
+		t.Errorf("expected description 'Deploys the application to production.', got %q", component.Description)
+	}
+}
+
 func TestFormatDefault(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -224,6 +284,136 @@ func TestParseTemplate_ComplexDefaults(t *testing.T) {
 	}
 	if timeout.Default != "5m0s" {
 		t.Errorf("timeout default should be '5m0s', got %q", timeout.Default)
+	}
+}
+
+func TestParseGitRemoteURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		remote   string
+		expected string
+	}{
+		{"SSH", "git@gitlab.com:group/project.git", "group/project"},
+		{"SSH with subgroup", "git@gitlab.com:group/subgroup/project.git", "group/subgroup/project"},
+		{"SSH without .git", "git@gitlab.com:group/project", "group/project"},
+		{"HTTPS", "https://gitlab.com/group/project.git", "group/project"},
+		{"HTTPS with subgroup", "https://gitlab.com/group/subgroup/project.git", "group/subgroup/project"},
+		{"HTTPS without .git", "https://gitlab.com/group/project", "group/project"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseGitRemoteURL(tt.remote)
+			if got != tt.expected {
+				t.Errorf("parseGitRemoteURL(%q) = %q, want %q", tt.remote, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestReadConfigProjectPath(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `project_path: my-group/my-project
+`
+	if err := os.WriteFile(filepath.Join(dir, ".gitlab-component-docs-gen.yml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change to temp dir to test config reading
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	got := readConfigProjectPath()
+	if got != "my-group/my-project" {
+		t.Errorf("expected 'my-group/my-project', got %q", got)
+	}
+}
+
+func TestReadConfigProjectPath_Missing(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	got := readConfigProjectPath()
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestResolveVersion_Priority(t *testing.T) {
+	// Set up config file with version in temp dir
+	dir := t.TempDir()
+	configContent := `version: "2.0.0"
+`
+	os.WriteFile(filepath.Join(dir, ".gitlab-component-docs-gen.yml"), []byte(configContent), 0644)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	// Flag takes priority over everything
+	got := resolveVersion("1.0.0")
+	if got != "1.0.0" {
+		t.Errorf("expected '1.0.0', got %q", got)
+	}
+
+	// Env var takes priority over config
+	t.Setenv("VERSION", "1.5.0")
+	got = resolveVersion("")
+	if got != "1.5.0" {
+		t.Errorf("expected '1.5.0', got %q", got)
+	}
+
+	// Config takes priority when no flag or env
+	os.Unsetenv("VERSION")
+	got = resolveVersion("")
+	if got != "2.0.0" {
+		t.Errorf("expected '2.0.0', got %q", got)
+	}
+}
+
+func TestResolveVersion_Fallback(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.Unsetenv("VERSION")
+	got := resolveVersion("")
+	if got != "<version>" {
+		t.Errorf("expected '<version>', got %q", got)
+	}
+}
+
+func TestResolveProjectPath_Priority(t *testing.T) {
+	// Set up config file in temp dir
+	dir := t.TempDir()
+	configContent := `project_path: from-config
+`
+	os.WriteFile(filepath.Join(dir, ".gitlab-component-docs-gen.yml"), []byte(configContent), 0644)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	// Flag takes priority over everything
+	got := resolveProjectPath("from-flag")
+	if got != "from-flag" {
+		t.Errorf("expected 'from-flag', got %q", got)
+	}
+
+	// Env var takes priority over config
+	t.Setenv("PROJECT_PATH", "from-env")
+	got = resolveProjectPath("")
+	if got != "from-env" {
+		t.Errorf("expected 'from-env', got %q", got)
+	}
+
+	// Config takes priority when no flag or env
+	os.Unsetenv("PROJECT_PATH")
+	got = resolveProjectPath("")
+	if got != "from-config" {
+		t.Errorf("expected 'from-config', got %q", got)
 	}
 }
 
