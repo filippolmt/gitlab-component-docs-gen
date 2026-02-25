@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,8 +18,8 @@ var defaultTemplate []byte
 
 // Struct representing YAML inputs
 type Inputs struct {
-	Description string `yaml:"description"`
-	Default     string `yaml:"default"`
+	Description string      `yaml:"description"`
+	Default     interface{} `yaml:"default"`
 }
 
 type Spec struct {
@@ -46,6 +47,27 @@ type TemplateData struct {
 	Components []ComponentData
 }
 
+// formatDefault converts a default value to its string representation for documentation.
+func formatDefault(val interface{}) string {
+	if val == nil {
+		return ""
+	}
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		return fmt.Sprintf("%v", v)
+	case []interface{}, map[string]interface{}:
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return "`" + string(jsonBytes) + "`"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func parseTemplate(path string) (ComponentData, error) {
 	yamlFile, err := os.ReadFile(path)
 	if err != nil {
@@ -63,8 +85,8 @@ func parseTemplate(path string) (ComponentData, error) {
 		inputs = append(inputs, InputData{
 			Name:        name,
 			Description: input.Description,
-			Required:    input.Default == "",
-			Default:     input.Default,
+			Required:    input.Default == nil,
+			Default:     formatDefault(input.Default),
 		})
 	}
 
