@@ -129,6 +129,104 @@ func TestParseTemplate_NoInputs(t *testing.T) {
 	}
 }
 
+func TestFormatDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{"nil", nil, ""},
+		{"string", "deploy", "deploy"},
+		{"empty string", "", ""},
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		{"int", 42, "42"},
+		{"float", 3.14, "3.14"},
+		{"array", []interface{}{map[string]interface{}{"if": "$CI_COMMIT_BRANCH == \"main\""}}, "`[{\"if\":\"$CI_COMMIT_BRANCH == \\\"main\\\"\"}]`"},
+		{"map", map[string]interface{}{"key": "value"}, "`{\"key\":\"value\"}`"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatDefault(tt.input)
+			if got != tt.expected {
+				t.Errorf("formatDefault(%v) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseTemplate_ComplexDefaults(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `spec:
+  inputs:
+    app_name:
+      description: "Application name"
+    rules:
+      description: "Execution rules"
+      type: array
+      default:
+        - if: '$CI_COMMIT_BRANCH == "main"'
+    save_artifacts:
+      description: "Save artifacts"
+      default: true
+      type: boolean
+    timeout:
+      description: "Timeout"
+      default: "5m0s"
+`
+	path := filepath.Join(dir, "deploy.yml")
+	if err := os.WriteFile(path, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := parseTemplate(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(component.Inputs) != 4 {
+		t.Fatalf("expected 4 inputs, got %d", len(component.Inputs))
+	}
+
+	// app_name is required (no default), should be first
+	if component.Inputs[0].Name != "app_name" || !component.Inputs[0].Required {
+		t.Errorf("expected first input to be required 'app_name', got '%s' required=%v", component.Inputs[0].Name, component.Inputs[0].Required)
+	}
+
+	// Find the other inputs by name
+	byName := make(map[string]InputData)
+	for _, input := range component.Inputs {
+		byName[input.Name] = input
+	}
+
+	// rules: array default should be JSON-serialized
+	rules := byName["rules"]
+	if rules.Required {
+		t.Error("rules should not be required (has default)")
+	}
+	if !strings.Contains(rules.Default, "CI_COMMIT_BRANCH") {
+		t.Errorf("rules default should contain CI_COMMIT_BRANCH, got %q", rules.Default)
+	}
+
+	// save_artifacts: boolean default
+	sa := byName["save_artifacts"]
+	if sa.Required {
+		t.Error("save_artifacts should not be required (has default)")
+	}
+	if sa.Default != "true" {
+		t.Errorf("save_artifacts default should be 'true', got %q", sa.Default)
+	}
+
+	// timeout: string default
+	timeout := byName["timeout"]
+	if timeout.Required {
+		t.Error("timeout should not be required (has default)")
+	}
+	if timeout.Default != "5m0s" {
+		t.Errorf("timeout default should be '5m0s', got %q", timeout.Default)
+	}
+}
+
 func TestEnsureTemplate_CreatesWhenMissing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md.tmpl")
