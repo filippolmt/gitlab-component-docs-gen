@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,22 +12,24 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// Struct per rappresentare gli input del YAML
+//go:embed README.md.tmpl
+var defaultTemplate []byte
+
+// Struct representing YAML inputs
 type Inputs struct {
 	Description string `yaml:"description"`
 	Default     string `yaml:"default"`
 }
 
 type Spec struct {
-	Description string            `yaml:"description"`
-	Inputs      map[string]Inputs `yaml:"inputs"`
+	Inputs map[string]Inputs `yaml:"inputs"`
 }
 
 type Config struct {
 	Spec Spec `yaml:"spec"`
 }
 
-// Struct per rappresentare i dati per il template
+// Struct representing template data
 type InputData struct {
 	Name        string
 	Description string
@@ -35,9 +38,8 @@ type InputData struct {
 }
 
 type ComponentData struct {
-	Name        string
-	Description string
-	Inputs      []InputData
+	Name   string
+	Inputs []InputData
 }
 
 type TemplateData struct {
@@ -67,26 +69,51 @@ func parseTemplate(path string) (ComponentData, error) {
 	}
 
 	sort.Slice(inputs, func(i, j int) bool {
-		// Metti i required prima, poi ordina per nome
+		// Sort required first, then alphabetically by name
 		if inputs[i].Required != inputs[j].Required {
 			return inputs[i].Required
 		}
 		return inputs[i].Name < inputs[j].Name
 	})
 
-	// Ricava il nome del componente dal nome del file (senza estensione)
+	// Derive component name from filename (without extension)
 	base := filepath.Base(path)
 	name := base[:len(base)-len(filepath.Ext(base))]
 
 	return ComponentData{
-		Name:        name,
-		Description: config.Spec.Description,
-		Inputs:      inputs,
+		Name:   name,
+		Inputs: inputs,
 	}, nil
 }
 
+// ensureTemplate checks if the template file exists, creates it from the default if missing
+func ensureTemplate(path string, defaultContent []byte) (bool, error) {
+	_, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = os.WriteFile(path, defaultContent, 0644)
+			if err != nil {
+				return false, fmt.Errorf("error creating default %s: %w", path, err)
+			}
+			return true, nil
+		}
+		return false, fmt.Errorf("error checking %s: %w", path, err)
+	}
+	return false, nil
+}
+
 func main() {
-	// Cerca tutti i template nella directory templates/
+	// If README.md.tmpl doesn't exist, create it from the embedded default
+	created, err := ensureTemplate("README.md.tmpl", defaultTemplate)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	if created {
+		fmt.Println("Created default README.md.tmpl")
+	}
+
+	// Find all templates in the templates/ directory
 	templates, err := filepath.Glob("templates/*.yml")
 	if err != nil {
 		fmt.Printf("Error finding template files: %s\n", err)
@@ -100,7 +127,7 @@ func main() {
 
 	sort.Strings(templates)
 
-	// Parsa tutti i template
+	// Parse all templates
 	var components []ComponentData
 	for _, t := range templates {
 		component, err := parseTemplate(t)
@@ -115,14 +142,14 @@ func main() {
 		Components: components,
 	}
 
-	// Leggi il file di template
+	// Read the template file
 	tmpl, err := template.ParseFiles("README.md.tmpl")
 	if err != nil {
 		fmt.Printf("Error reading template file: %s\n", err)
 		return
 	}
 
-	// Esegui il template con i dati
+	// Execute the template with data
 	var doc bytes.Buffer
 	err = tmpl.Execute(&doc, templateData)
 	if err != nil {
@@ -130,7 +157,7 @@ func main() {
 		return
 	}
 
-	// Scrivi il file di documentazione
+	// Write the documentation file
 	err = os.WriteFile("README.md", doc.Bytes(), 0644)
 	if err != nil {
 		fmt.Printf("Error writing Markdown file: %s\n", err)

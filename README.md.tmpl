@@ -1,8 +1,6 @@
 {{ range .Components }}
 ## {{ .Name }}
 
-{{ .Description }}
-
 ```yaml
 include:
   - component: $CI_SERVER_FQDN/<your-project-path>/{{ .Name }}@<version>
