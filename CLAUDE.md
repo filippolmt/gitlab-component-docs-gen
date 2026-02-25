@@ -13,10 +13,18 @@ A single-file Go CLI tool that generates README.md documentation from GitLab CI/
 go run main.go
 
 # Build a binary
-go build -o gitlab_component main.go
+go build -o gitlab-component-docs-gen main.go
 ```
 
-There are no tests or linting configured in this project.
+## Tests
+
+```bash
+# Run all tests
+go test -v ./...
+
+# Run unit tests only (skip integration)
+go test -v -short ./...
+```
 
 ## Architecture
 
@@ -35,8 +43,22 @@ Key types: `Config` (YAML structure) → `ComponentData`/`InputData` (template d
 - `README.md.tmpl` — Go text/template that defines the generated README format
 - `README.md` — **generated output**, not manually edited (will be overwritten on each run)
 
+## Docker
+
+```bash
+# Build the image locally
+docker build -t gitlab-component-docs-gen .
+
+# Run against a repository (mount the repo root as /app)
+docker run --rm -v $(pwd):/app gitlab-component-docs-gen
+```
+
+If `README.md.tmpl` doesn't exist in the mounted directory, the container auto-creates it from the embedded default template.
+
+The image is published to `ghcr.io` via GitHub Actions when a version tag (`v*`) is pushed.
+
 ## Conventions
 
 - The Go module is named `doc` (in `go.mod`)
-- Code comments are in Italian
+- Code comments are in English
 - The tool expects to be run from the repository root where `templates/` and `README.md.tmpl` exist
