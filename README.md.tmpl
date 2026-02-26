@@ -3,11 +3,11 @@
 
 ```yaml
 include:
-  - component: $CI_SERVER_FQDN/<your-project-path>/{{ .Name }}@<version>
-    inputs:
-      app_name: my-app
+  - component: $CI_SERVER_FQDN/{{ $.ProjectPath }}/{{ .Name }}@{{ $.Version }}
 ```
-
+{{ if .Description }}
+{{ .Description }}
+{{ end }}
 ### Inputs
 
 | Name | Description | Required | Default |
